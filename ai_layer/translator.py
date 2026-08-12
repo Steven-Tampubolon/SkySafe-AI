@@ -1,12 +1,16 @@
 """
-ai_layer/translator.py — Lapisan AI translasi SkySafe AI (role: Petani, Minggu 1).
+ai_layer/translator.py — SkySafe AI translation layer (Groq).
 
-PRINSIP KERAS (dari skysafe-ai-prompt-templates.md):
-AI di lapisan ini TIDAK PERNAH menghitung/mengoreksi angka. Semua skor sudah
-final dari modul deterministik (ingestion + scoring). Tugas AI murni
-menerjemahkan ke bahasa natural sesuai role. Kalau LLM mengubah angka kunci
-di output (confidence_label, dll) dibanding input asli -> ditolak & fallback
-ke template statis. Ini pengaman trust utama sistem.
+HARD RULE (from skysafe-ai-prompt-templates v2): the AI here NEVER computes
+or corrects numbers. All scores are final, computed by the deterministic
+scoring module (scoring/scoring.py). The AI's only job is to translate
+those scores into role-specific, natural-language guidance in English. If
+the LLM changes any key value in its output vs. the input, the output is
+rejected and a static fallback is used instead — the main trust safeguard.
+
+v2 change: all AI output is now in English (global audience), input
+includes geomagnetic_latitude_band so the AI can explain WHY the same
+storm hits harder at some locations than others.
 """
 
 import os
@@ -24,7 +28,7 @@ logging.basicConfig(level=logging.INFO)
 GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions"
 GROQ_MODEL = "llama-3.3-70b-versatile"
 REQUEST_TIMEOUT = 20
-MAX_RETRIES = 1  # 1x retry kalau validasi gagal, setelah itu fallback statis
+MAX_RETRIES = 1
 
 OUTPUT_REQUIRED_KEYS = [
     "headline", "plain_explanation", "recommended_action",
@@ -33,128 +37,229 @@ OUTPUT_REQUIRED_KEYS = [
 
 
 class TranslationError(Exception):
-    """Dilempar hanya untuk error konfigurasi (mis. API key kosong) atau role tak dikenal."""
+    """Raised only for configuration errors (missing API key) or unknown role."""
     pass
 
 
 MASTER_SYSTEM_PROMPT = """\
-Anda adalah lapisan penerjemah SkySafe AI. Tugas Anda HANYA menerjemahkan data
-dan skor dampak cuaca antariksa yang SUDAH DIHITUNG secara deterministik
-menjadi bahasa yang mudah dipahami sesuai peran pengguna yang diberikan.
+You are the translation layer for SkySafe AI. Your ONLY job is to translate
+space weather impact data and scores that have ALREADY been calculated
+deterministically into language that is easy to understand for the given
+user role. Always respond in English, regardless of the user's location.
 
-ANDA TIDAK BOLEH:
-- Menghitung ulang, mengoreksi, atau mengubah angka/skor/index yang diberikan
-  di input. Semua angka adalah fakta yang sudah final.
-- Membuat prediksi, angka, atau klaim baru yang tidak ada di data input.
-- Memberi jaminan mutlak ("pasti aman", "pasti gagal", "dijamin normal").
-- Mengarang atau memodifikasi nama sumber data.
-- Menyembunyikan atau meremehkan skor risiko tinggi demi nada yang "enak dibaca".
+YOU MUST NOT:
+- Recalculate, correct, or change any number/score/index given in the input.
+  All numbers are final facts.
+- Invent any new prediction, number, or claim not present in the input data.
+- Give absolute guarantees ("definitely safe", "definitely fine", "guaranteed
+  normal").
+- Invent or alter the name of any data source.
+- Downplay or hide a high risk score to make the tone "nicer to read".
 
-ANDA WAJIB:
-- Selalu sertakan skor/index mentah dan nama sumber resmi dalam penjelasan.
-- Menyesuaikan istilah dan fokus dengan peran pengguna yang diberikan.
-- Menggunakan bahasa tenang, konkret, dan actionable — bukan menakut-nakuti.
-- Menyatakan tingkat keyakinan (confidence_level) dan alasan singkatnya.
-- Jika data bersifat FORECAST (bukan real-time terukur), nyatakan itu secara
-  eksplisit dan jangan sampaikan seolah-olah kejadian pasti terjadi.
-- Jika impact_label = "Kritis", arahkan pengguna untuk mengecek sumber resmi
-  secara langsung (link disediakan di input) — jangan beri false reassurance.
+YOU MUST:
+- Always include the raw score/index and the official source name in your
+  explanation.
+- Adapt terminology and focus to the given user role.
+- Use a calm, concrete, actionable tone — not alarmist.
+- State the confidence_level and a brief reason for it.
+- If the data is FORECAST (not a real-time measurement), state that
+  explicitly and do not present it as a certain event.
+- If gps_impact_label = "Critical", direct the user to check the official
+  source directly (link provided in input) — never give false reassurance.
+- If geomagnetic_latitude_band = "Equatorial/Low", note that geomagnetic
+  storm effects are generally weaker at this latitude than the raw
+  Kp-index alone would suggest for high-latitude regions — the
+  gps_impact_score already accounts for this, just make it clear in the
+  explanation so the user understands why the impact may feel less severe
+  than headlines about the same storm elsewhere.
 
-FORMAT OUTPUT: selalu balas HANYA dalam JSON valid sesuai skema yang diberikan
-di setiap prompt peran. Jangan tambahkan teks di luar JSON.
+OUTPUT FORMAT: reply ONLY with valid JSON matching the schema given in each
+role prompt. Do not add any text outside the JSON.
 """
 
-ROLE_TEMPLATE_PETANI = """\
-PERAN: Petani atau operator alat pertanian presisi (traktor RTK-GPS, drone
-sprayer, mesin tanam/panen otomatis).
+ROLE_TEMPLATE_FARMER = """\
+ROLE: Farmer or precision-agriculture equipment operator (RTK-GPS tractor,
+spray drone, auto-steer harvesting).
 
-FOKUS PENJELASAN:
-- Dampak ke akurasi GPS untuk tanam presisi, semprot terarah, dan panen
-  otomatis. Gunakan satuan familiar (pergeseran dalam cm/meter) HANYA jika
-  informasi itu tersedia di gps_impact_score — jangan mengarang angka cm.
-- Jika gps_impact_label "Sedang" ke atas, sarankan alternatif praktis
-  (mis. tunda operasi presisi, gunakan mode manual, cek ulang titik acuan).
+EXPLANATION FOCUS:
+- Impact on GPS accuracy for precision planting, targeted spraying, and
+  automated harvesting. Use familiar units (cm/meter drift) ONLY if that
+  information is present in gps_impact_score — never invent a specific
+  drift number.
+- If gps_impact_label is "Moderate" or higher, suggest a practical
+  alternative (e.g. delay precision operations, switch to manual mode,
+  re-check reference points).
+- If geomagnetic_latitude_band is "Equatorial/Low", briefly note the
+  impact is typically less severe here than at high latitudes for the
+  same storm.
 
-NADA: praktis, hangat, hindari jargon teknis cuaca antariksa. Bayangkan Anda
-menjelaskan ke petani yang tidak familiar istilah "geomagnetik" atau "Kp-index" —
-sebut istilah itu sekali saja untuk konteks, lalu fokus ke dampak praktisnya.
+TONE: practical, warm, avoid space-weather jargon. Mention terms like
+"geomagnetic storm" or "Kp-index" once for context, then focus entirely on
+the practical impact.
 
-SKEMA OUTPUT (WAJIB, balas HANYA JSON ini, tanpa teks lain):
+OUTPUT SCHEMA (REQUIRED, reply with ONLY this JSON, no other text):
 {{
-  "headline": "1 kalimat pendek, langsung ke inti dampak",
-  "plain_explanation": "2-3 kalimat, bahasa awam sesuai peran",
-  "recommended_action": "1-2 kalimat, konkret dan bisa langsung dilakukan",
-  "confidence_label": "diambil langsung dari input, jangan diubah",
-  "why_confidence": "1 kalimat alasan tingkat keyakinan",
-  "source_citation": "nama sumber + url, diambil langsung dari input"
+  "headline": "1 short sentence, gets straight to the impact",
+  "plain_explanation": "2-3 sentences, plain language matching the role",
+  "recommended_action": "1-2 sentences, concrete and immediately actionable",
+  "confidence_label": "copied directly from input, do not alter",
+  "why_confidence": "1 sentence explaining the confidence level",
+  "source_citation": "source name + url, copied directly from input"
 }}
 
-DATA INPUT:
+INPUT DATA:
 {input_json}
+
+Produce output matching the JSON schema defined above.
+"""
+
+ROLE_TEMPLATE_SURVEYOR = """\
+ROLE: Surveyor or geodesy practitioner using RTK/PPK GNSS.
+
+EXPLANATION FOCUS:
+- Impact on positioning accuracy and possible ionospheric scintillation.
+- Technical terms are fine (Kp-index, scintillation, fix/float RTK) since
+  the audience knows this domain — but still spell out the practical
+  implication (e.g. risk of losing RTK fix, need to re-observe a baseline).
+- If geomagnetic_latitude_band is "Equatorial/Low", note that equatorial
+  ionospheric scintillation can still be a separate concern independent of
+  the geomagnetic storm score, and recommend normal best practices for
+  low-latitude GNSS work.
+
+TONE: technical, concise, straight to the actionable insight. No need to
+explain basic space-weather concepts.
+
+OUTPUT SCHEMA (REQUIRED, reply with ONLY this JSON, no other text):
+{{
+  "headline": "1 short sentence, gets straight to the impact",
+  "plain_explanation": "2-3 sentences, plain language matching the role",
+  "recommended_action": "1-2 sentences, concrete and immediately actionable",
+  "confidence_label": "copied directly from input, do not alter",
+  "why_confidence": "1 sentence explaining the confidence level",
+  "source_citation": "source name + url, copied directly from input"
+}}
+
+INPUT DATA:
+{input_json}
+
+Produce output matching the JSON schema defined above.
+"""
+
+ROLE_TEMPLATE_HAM_RADIO = """\
+ROLE: Amateur (ham) radio operator or HF communications operator, including
+emergency radio use.
+
+EXPLANATION FOCUS:
+- Impact on HF propagation and blackout risk over the forecast window.
+- Use terminology familiar to the ham radio community (band, propagation,
+  blackout, MUF) but explain briefly so newcomers can follow too.
+- If hf_blackout_risk_label is "High" or "Critical", suggest considering an
+  alternate band or communication schedule if relevant from the data.
+
+TONE: to the point, like one operator sharing band conditions with another.
+
+OUTPUT SCHEMA (REQUIRED, reply with ONLY this JSON, no other text):
+{{
+  "headline": "1 short sentence, gets straight to the impact",
+  "plain_explanation": "2-3 sentences, plain language matching the role",
+  "recommended_action": "1-2 sentences, concrete and immediately actionable",
+  "confidence_label": "copied directly from input, do not alter",
+  "why_confidence": "1 sentence explaining the confidence level",
+  "source_citation": "source name + url, copied directly from input"
+}}
+
+INPUT DATA:
+{input_json}
+
+Produce output matching the JSON schema defined above.
+"""
+
+ROLE_TEMPLATE_GENERAL_PUBLIC = """\
+ROLE: General public, no technical background assumed.
+
+EXPLANATION FOCUS:
+- Everyday impact most relevant to them: GPS accuracy on phones/map apps,
+  and — only if kp_index indicates favorable conditions — mention the
+  possibility of visible aurora. Do not mention it if the data doesn't
+  support it.
+- Do not mention precision-agriculture or survey-grade GPS impacts — not
+  relevant for this role.
+
+TONE: casual, a little engaging/educational, but always accurate and never
+exaggerated.
+
+OUTPUT SCHEMA (REQUIRED, reply with ONLY this JSON, no other text):
+{{
+  "headline": "1 short sentence, gets straight to the impact",
+  "plain_explanation": "2-3 sentences, plain language matching the role",
+  "recommended_action": "1-2 sentences, concrete and immediately actionable",
+  "confidence_label": "copied directly from input, do not alter",
+  "why_confidence": "1 sentence explaining the confidence level",
+  "source_citation": "source name + url, copied directly from input"
+}}
+
+INPUT DATA:
+{input_json}
+
+Produce output matching the JSON schema defined above.
 """
 
 ROLE_TEMPLATES = {
-    "petani": ROLE_TEMPLATE_PETANI,
-    # role lain (surveyor, radio_amatir, umum) ditambahkan Minggu 2
+    "farmer": ROLE_TEMPLATE_FARMER,
+    "surveyor": ROLE_TEMPLATE_SURVEYOR,
+    "ham_radio_operator": ROLE_TEMPLATE_HAM_RADIO,
+    "general_public": ROLE_TEMPLATE_GENERAL_PUBLIC,
 }
 
 
 def _get_groq_api_key() -> str:
     key = os.getenv("GROQ_API_KEY")
     if not key:
-        raise TranslationError("GROQ_API_KEY tidak ditemukan di .env")
+        raise TranslationError("GROQ_API_KEY not found in .env")
     return key
 
 
 def _build_static_fallback(data: dict) -> dict:
-    """
-    Template statis non-AI berbasis label saja — dipakai kalau Groq API gagal
-    atau outputnya tidak valid/tidak lolos validasi. Trust Panel TIDAK BOLEH
-    kosong walau AI gagal total (sesuai catatan integrasi dokumen prompt).
-    """
-    gps_label = data.get("gps_impact_label", "Tidak diketahui")
-    confidence = data.get("confidence_level", "Tidak diketahui")
-    source = data.get("source_name", "Sumber tidak diketahui")
+    """Non-AI, label-based static template — used if Groq fails or its
+    output doesn't pass validation. The Trust Panel must never be empty."""
+    gps_label = data.get("gps_impact_label", "Unknown")
+    confidence = data.get("confidence_level", "Unknown")
+    source = data.get("source_name", "Unknown source")
     url = data.get("source_url", "")
 
     return {
-        "headline": f"Dampak GPS saat ini: {gps_label}",
+        "headline": f"Current GPS impact: {gps_label}",
         "plain_explanation": (
-            f"Berdasarkan data dari {source}, tingkat dampak terhadap akurasi "
-            f"GPS berada pada level '{gps_label}'. Data ini bersifat "
-            f"{data.get('data_type', 'tidak diketahui')}."
+            f"Based on data from {source}, the current impact level on GPS "
+            f"accuracy is '{gps_label}'. This data is "
+            f"{data.get('data_type', 'of unknown type')}."
         ),
         "recommended_action": (
-            "Cek sumber resmi untuk detail lebih lanjut sebelum mengambil "
-            "keputusan operasional."
+            "Check the official source for further detail before making "
+            "any operational decisions."
         ),
         "confidence_label": confidence,
-        "why_confidence": data.get("confidence_reason", "Tidak ada penjelasan tambahan."),
+        "why_confidence": data.get("confidence_reason", "No additional explanation available."),
         "source_citation": f"{source} — {url}".strip(" —"),
         "_is_fallback": True,
     }
 
 
 def _validate_output(output: dict, data: dict) -> bool:
-    """
-    Validasi-balik: pastikan semua key wajib ada DAN confidence_label di
-    output sama persis dengan confidence_level di input. Ini pengaman supaya
-    LLM tidak diam-diam mengubah angka/label kunci (lihat "Catatan Integrasi"
-    di dokumen prompt template).
-    """
+    """Ensure the LLM didn't alter key values compared to the input."""
     if not isinstance(output, dict):
         return False
 
     for key in OUTPUT_REQUIRED_KEYS:
         if key not in output or not isinstance(output[key], str) or not output[key].strip():
-            logger.warning(f"Validasi gagal: key '{key}' hilang/kosong di output LLM.")
+            logger.warning(f"Validation failed: key '{key}' missing/empty in LLM output.")
             return False
 
     expected_confidence = data.get("confidence_level")
     if output["confidence_label"].strip() != str(expected_confidence).strip():
         logger.warning(
-            f"Validasi gagal: confidence_label output "
-            f"({output['confidence_label']!r}) != confidence_level input "
+            f"Validation failed: output confidence_label "
+            f"({output['confidence_label']!r}) != input confidence_level "
             f"({expected_confidence!r})."
         )
         return False
@@ -164,10 +269,7 @@ def _validate_output(output: dict, data: dict) -> bool:
 
 def _call_groq(system_prompt: str, user_prompt: str) -> dict:
     api_key = _get_groq_api_key()
-    headers = {
-        "Authorization": f"Bearer {api_key}",
-        "Content-Type": "application/json",
-    }
+    headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
     payload = {
         "model": GROQ_MODEL,
         "temperature": 0.2,
@@ -181,29 +283,27 @@ def _call_groq(system_prompt: str, user_prompt: str) -> dict:
     resp = requests.post(GROQ_API_URL, headers=headers, json=payload, timeout=REQUEST_TIMEOUT)
     resp.raise_for_status()
     body = resp.json()
-
     content = body["choices"][0]["message"]["content"]
     return json.loads(content)
 
 
 def call_translation_layer(role: str, data: dict) -> dict:
     """
-    Terjemahkan data + skor deterministik menjadi rekomendasi bahasa natural
-    sesuai role, lewat Groq API. Selalu validasi-balik output terhadap input;
-    kalau gagal (tidak valid JSON, key hilang, atau angka kunci berubah),
-    retry sekali, lalu fallback ke template statis non-AI.
+    Translate deterministic scores into role-specific natural-language
+    guidance via Groq. Always validates output against input; retries once
+    on failure, then falls back to a static template.
 
     Args:
-        role: salah satu dari ROLE_TEMPLATES (Minggu 1 baru ada "petani").
-        data: dict sesuai skema input dokumen prompt template (kp_index,
-              gps_impact_label, confidence_level, source_name, dst).
+        role: "farmer" | "surveyor" | "ham_radio_operator" | "general_public"
+        data: dict matching the v2 input schema (kp_index,
+              geomagnetic_latitude_band, gps_impact_label, confidence_level,
+              source_name, etc.)
 
     Returns:
-        dict sesuai skema output Trust Panel. Ada key tambahan
-        "_is_fallback": True/False untuk menandai asal output.
+        dict matching the Trust Panel output schema, plus "_is_fallback".
     """
     if role not in ROLE_TEMPLATES:
-        raise TranslationError(f"Role '{role}' belum didukung di Minggu 1: {list(ROLE_TEMPLATES.keys())}")
+        raise TranslationError(f"Unsupported role: {role!r}. Supported: {list(ROLE_TEMPLATES.keys())}")
 
     template = ROLE_TEMPLATES[role]
     user_prompt = template.format(input_json=json.dumps(data, ensure_ascii=False, indent=2))
@@ -216,7 +316,7 @@ def call_translation_layer(role: str, data: dict) -> dict:
         try:
             output = _call_groq(MASTER_SYSTEM_PROMPT, user_prompt)
         except (requests.exceptions.RequestException, KeyError, json.JSONDecodeError) as e:
-            logger.warning(f"Percobaan {attempts} gagal: {e}")
+            logger.warning(f"Attempt {attempts} failed: {e}")
             last_error = e
             continue
 
@@ -224,7 +324,7 @@ def call_translation_layer(role: str, data: dict) -> dict:
             output["_is_fallback"] = False
             return output
 
-        logger.warning(f"Percobaan {attempts}: output tidak lolos validasi.")
+        logger.warning(f"Attempt {attempts}: output failed validation.")
 
-    logger.error(f"Semua percobaan gagal (terakhir: {last_error}). Pakai fallback statis.")
+    logger.error(f"All attempts failed (last: {last_error}). Using static fallback.")
     return _build_static_fallback(data)
