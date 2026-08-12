@@ -59,6 +59,7 @@ G_TIERS = [
 ]
 G0_TIER = GTier(kp_min=0.0, kp_max=5.0, g_scale="G0", score_min=0, score_max=20)
 
+
 def get_g_scale(kp_index: float) -> str:
     """Return just the G-scale code (e.g. 'G2 Moderate') for display/debug."""
     if kp_index < 0 or kp_index > 9:
@@ -72,11 +73,12 @@ def get_g_scale(kp_index: float) -> str:
             return t.g_scale
     return "G5 Extreme"
 
+
 def _raw_score_from_kp(kp_index: float) -> float:
     """Raw 0-100 score from Kp alone, high-latitude calibration, linear
     within each G-scale tier. This is the number that's directly traceable
     to the official NOAA table."""
-    if kp_index < 0 or kp_index >9:
+    if kp_index < 0 or kp_index > 9:
         raise ScoringError(f"kp_index out of valid range [0, 9]: {kp_index}")
 
     if kp_index >= 9.0:
@@ -95,8 +97,15 @@ def _raw_score_from_kp(kp_index: float) -> float:
     score_span = tier.score_max - tier.score_min
     return round(tier.score_min + position * score_span, 1)
 
+
+# --- Geomagnetic latitude (dipole approximation) ---
+
+# North geomagnetic pole, dipole approximation (~2020 epoch, IGRF).
+# Accurate enough to bucket a location into a latitude band — not intended
+# for precision scientific use.
 GEOMAGNETIC_NORTH_POLE_LAT = 80.65
 GEOMAGNETIC_NORTH_POLE_LON = -72.68
+
 
 def geomagnetic_latitude(geo_lat: float, geo_lon: float) -> float:
     """
@@ -118,6 +127,7 @@ def geomagnetic_latitude(geo_lat: float, geo_lon: float) -> float:
     sin_gmlat = max(-1.0, min(1.0, sin_gmlat))
     return math.degrees(math.asin(sin_gmlat))
 
+
 def classify_latitude_band(geo_lat: float, geo_lon: float) -> str:
     """
     Classify coordinates into the latitude band used by the scoring model,
@@ -134,15 +144,19 @@ def classify_latitude_band(geo_lat: float, geo_lon: float) -> str:
         return "High-Latitude/Auroral"
     if gmlat >= 30:
         return "Mid-Latitude"
-    return "Equatorial/low"
+    return "Equatorial/Low"
 
-LATITUDE_ADJUSMENT_FACTOR = {
-    "High-Latitude/Auroral":1.0,
-    "Mid-Latitude":0.7,
-    "Equatorial/low":0.4,
+
+# --- GPS impact: raw score x latitude adjustment ---
+
+LATITUDE_ADJUSTMENT_FACTOR = {
+    "High-Latitude/Auroral": 1.0,   # original NOAA table calibration
+    "Mid-Latitude": 0.7,
+    "Equatorial/Low": 0.4,
 }
 
-def _label_from_adjuted_score(score: float) -> str:
+
+def _label_from_adjusted_score(score: float) -> str:
     if score < 25:
         return "Low"
     if score < 50:
@@ -150,6 +164,7 @@ def _label_from_adjuted_score(score: float) -> str:
     if score < 75:
         return "High"
     return "Critical"
+
 
 def score_gps_impact(kp_index: float, geomagnetic_latitude_band: str) -> tuple[float, str]:
     """
@@ -174,16 +189,19 @@ def score_gps_impact(kp_index: float, geomagnetic_latitude_band: str) -> tuple[f
     Returns:
         (adjusted_score, label)
     """
-    if geomagnetic_latitude_band not in LATITUDE_ADJUSMENT_FACTOR:
+    if geomagnetic_latitude_band not in LATITUDE_ADJUSTMENT_FACTOR:
         raise ScoringError(
-            f"Unreconized geomagnetic_latitude_band: {geomagnetic_latitude_band!r}. "
-            f"Must be on of: {list(LATITUDE_ADJUSMENT_FACTOR.keys)}"
+            f"Unrecognized geomagnetic_latitude_band: {geomagnetic_latitude_band!r}. "
+            f"Must be one of: {list(LATITUDE_ADJUSTMENT_FACTOR.keys())}"
         )
 
     raw_score = _raw_score_from_kp(kp_index)
-    factor = LATITUDE_ADJUSMENT_FACTOR[geomagnetic_latitude_band]
+    factor = LATITUDE_ADJUSTMENT_FACTOR[geomagnetic_latitude_band]
     adjusted_score = round(raw_score * factor, 1)
-    return adjusted_score, _label_from_adjuted_score(adjusted_score)
+    return adjusted_score, _label_from_adjusted_score(adjusted_score)
+
+
+# --- R-scale (flare -> HF blackout risk, NOT latitude-adjusted) ---
 
 FLARE_CLASS_PATTERN = re.compile(r"^([ABCMX])(\d+(?:\.\d+)?)?$", re.IGNORECASE)
 
@@ -196,20 +214,21 @@ R_LABEL_MAP = {
     "R5 Extreme": "Critical",
 }
 
+
 def get_r_scale(flare_class: str) -> str:
     """Return just the R-scale code (e.g. 'R2 Moderate') for display/debug."""
     if flare_class is None or flare_class.strip().lower() in ("none", "tidak ada", ""):
-        return "RO"
+        return "R0"
 
     match = FLARE_CLASS_PATTERN.match(flare_class.strip())
     if not match:
-        raise ScoringError(f"Unreconized flare_class format: {flare_class!r}")
+        raise ScoringError(f"Unrecognized flare_class format: {flare_class!r}")
 
     letter = match.group(1).upper()
     magnitude = float(match.group(2)) if match.group(2) else 1.0
 
     if letter in ("A", "B", "C"):
-        return "RO"
+        return "R0"
     if letter == "M":
         return "R1 Minor" if magnitude < 5 else "R2 Moderate"
     if letter == "X":
@@ -218,18 +237,22 @@ def get_r_scale(flare_class: str) -> str:
         if magnitude < 10:
             return "R3 Strong"
         if magnitude < 20:
-            return "R4 Reserve"
+            return "R4 Severe"
         return "R5 Extreme"
 
-    raise ScoringError(f"Unreconized flare class: {flare_class!r}")
+    raise ScoringError(f"Unrecognized flare class: {flare_class!r}")
 
-def score_hf_risk(falre_class: str) -> str:
+
+def score_hf_risk(flare_class: str) -> str:
     """
     Determine HF radio blackout risk label from flare class, per the
     official R-scale table. Intentionally NOT latitude-adjusted — flares
     ionize the whole sunlit hemisphere roughly uniformly.
     """
-    return R_LABEL_MAP[get_r_scale(falre_class)]
+    return R_LABEL_MAP[get_r_scale(flare_class)]
+
+
+# --- Confidence ---
 
 def compute_confidence(data_type: str, forecast_horizon_hours: float = 0) -> tuple[str, str]:
     """
@@ -242,7 +265,7 @@ def compute_confidence(data_type: str, forecast_horizon_hours: float = 0) -> tup
         (level, reason) — level is "High" | "Medium" | "Low"
     """
     if data_type not in ("real-time", "forecast"):
-        raise ScoringError(f"data_type must be 'real-time' or 'forecast', gor: {data_type!r}")
+        raise ScoringError(f"data_type must be 'real-time' or 'forecast', got: {data_type!r}")
 
     if data_type == "real-time":
         return "High", "Data measured directly from NOAA/NASA instruments, not a prediction."
