@@ -76,8 +76,10 @@ def get_g_scale(kp_index: float) -> str:
 
 def _raw_score_from_kp(kp_index: float) -> float:
     """Raw 0-100 score from Kp alone, high-latitude calibration, linear
-    within each G-scale tier. This is the number that's directly traceable
-    to the official NOAA table."""
+    within each G-scale tier. Returned UNROUNDED — rounding happens only at
+    final display time in score_gps_impact(), so tier-boundary labels
+    (e.g. Kp=4.99) aren't misclassified by an intermediate rounding
+    artifact (19.96 rounding up to 20.0 before the label check)."""
     if kp_index < 0 or kp_index > 9:
         raise ScoringError(f"kp_index out of valid range [0, 9]: {kp_index}")
 
@@ -95,7 +97,7 @@ def _raw_score_from_kp(kp_index: float) -> float:
     position = (kp_index - tier.kp_min) / tier_span if tier_span > 0 else 0
     position = min(position, 1.0)
     score_span = tier.score_max - tier.score_min
-    return round(tier.score_min + position * score_span, 1)
+    return tier.score_min + position * score_span  # unrounded
 
 
 # --- Geomagnetic latitude (dipole approximation) ---
@@ -157,11 +159,20 @@ LATITUDE_ADJUSTMENT_FACTOR = {
 
 
 def _label_from_adjusted_score(score: float) -> str:
-    if score < 25:
+    """
+    Bucket boundaries are NOT arbitrary round numbers — they follow the
+    official G-scale tier groupings directly, so every boundary is
+    traceable back to the NOAA table:
+      G0            (score 0-20)  -> Low
+      G1 + G2       (score 20-55) -> Moderate
+      G3 + G4       (score 55-85) -> High
+      G5            (score 85-100)-> Critical
+    """
+    if score < 20:
         return "Low"
-    if score < 50:
+    if score < 55:
         return "Moderate"
-    if score < 75:
+    if score < 85:
         return "High"
     return "Critical"
 
@@ -178,7 +189,9 @@ def score_gps_impact(kp_index: float, geomagnetic_latitude_band: str) -> tuple[f
        Mid-Latitude=0.7, Equatorial/Low=0.4 — since the same storm has a
        much weaker practical GPS impact near the equator.
 
-    The adjusted score is then bucketed into Low/Moderate/High/Critical.
+    The label is determined from the full-precision adjusted score, and
+    ONLY THEN is the score itself rounded to 1 decimal for display — this
+    keeps tier boundaries exact even when the displayed number is rounded.
 
     Args:
         kp_index: 0-9.
@@ -197,8 +210,12 @@ def score_gps_impact(kp_index: float, geomagnetic_latitude_band: str) -> tuple[f
 
     raw_score = _raw_score_from_kp(kp_index)
     factor = LATITUDE_ADJUSTMENT_FACTOR[geomagnetic_latitude_band]
-    adjusted_score = round(raw_score * factor, 1)
-    return adjusted_score, _label_from_adjusted_score(adjusted_score)
+    adjusted_score_precise = raw_score * factor
+
+    label = _label_from_adjusted_score(adjusted_score_precise)
+    adjusted_score = round(adjusted_score_precise, 1)
+
+    return adjusted_score, label
 
 
 # --- R-scale (flare -> HF blackout risk, NOT latitude-adjusted) ---
