@@ -13,35 +13,8 @@ import json
 
 from ingestion.ingestion import get_current_conditions
 from ingestion.geocoding import geocode_location
-from scoring.scoring import score_gps_impact, score_hf_risk, compute_confidence, classify_latitude_band
+from pipeline import build_trust_panel_input
 from ai_layer.translator import call_translation_layer
-
-
-def build_trust_panel_input(resolved_location: dict, conditions: dict) -> dict:
-    latitude_band = classify_latitude_band(resolved_location["latitude"], resolved_location["longitude"])
-    gps_score, gps_label = score_gps_impact(conditions["kp_index"], latitude_band)
-    hf_label = score_hf_risk(conditions["flare_class"])
-
-    data_type = "forecast" if conditions.get("_from_cache") else "real-time"
-    confidence_level, confidence_reason = compute_confidence(data_type, forecast_horizon_hours=0)
-
-    return {
-        "role": "farmer",
-        "location_name": resolved_location["resolved_name"],
-        "local_time": conditions["fetched_at"],
-        "kp_index": conditions["kp_index"],
-        "solar_flare_class": conditions["flare_class"],
-        "geomagnetic_latitude_band": latitude_band,
-        "gps_impact_score": gps_score,
-        "gps_impact_label": gps_label,
-        "hf_blackout_risk_label": hf_label,
-        "forecast_window": conditions["fetched_at"],
-        "data_type": data_type,
-        "confidence_level": confidence_level,
-        "confidence_reason": confidence_reason,
-        "source_name": "NOAA SWPC",
-        "source_url": "https://www.swpc.noaa.gov/products/planetary-k-index",
-    }
 
 
 if __name__ == "__main__":
