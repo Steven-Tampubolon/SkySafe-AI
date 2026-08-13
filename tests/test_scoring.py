@@ -57,11 +57,11 @@ class TestScoreGpsImpactLatitudeAdjustment:
         exactly the over-estimation bug this revision fixes."""
         score, label = score_gps_impact(9.0, "Equatorial/Low")
         assert label != "Critical"
-        assert score == pytest.approx(40.0, abs=0.1)
+        assert score == pytest.approx(35.0, abs=0.1)
 
     def test_mid_latitude_factor(self):
         score, _ = score_gps_impact(9.0, "Mid-Latitude")
-        assert score == pytest.approx(70.0, abs=0.1)
+        assert score == pytest.approx(60.0, abs=0.1)
 
     def test_unknown_band_raises(self):
         with pytest.raises(ScoringError):
@@ -94,6 +94,14 @@ class TestGeomagneticLatitude:
         gmlat_a = geomagnetic_latitude(50.0, -100.0)
         gmlat_b = geomagnetic_latitude(50.0, 100.0)
         assert abs(gmlat_a - gmlat_b) > 10
+
+    def test_fairbanks_is_high_latitude(self):
+        # Reference point required by Week 2 sprint doc.
+        assert classify_latitude_band(64.84, -147.72) == "High-Latitude/Auroral"
+
+    def test_london_is_mid_latitude(self):
+        # Reference point required by Week 2 sprint doc.
+        assert classify_latitude_band(51.5074, -0.1278) == "Mid-Latitude"
 
 
 class TestScoreHfRisk:

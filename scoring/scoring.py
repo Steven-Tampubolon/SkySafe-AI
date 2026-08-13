@@ -105,8 +105,8 @@ def _raw_score_from_kp(kp_index: float) -> float:
 # North geomagnetic pole, dipole approximation (~2020 epoch, IGRF).
 # Accurate enough to bucket a location into a latitude band — not intended
 # for precision scientific use.
-GEOMAGNETIC_NORTH_POLE_LAT = 80.65
-GEOMAGNETIC_NORTH_POLE_LON = -72.68
+GEOMAGNETIC_NORTH_POLE_LAT = 80.7
+GEOMAGNETIC_NORTH_POLE_LON = -72.7
 
 
 def geomagnetic_latitude(geo_lat: float, geo_lon: float) -> float:
@@ -153,8 +153,8 @@ def classify_latitude_band(geo_lat: float, geo_lon: float) -> str:
 
 LATITUDE_ADJUSTMENT_FACTOR = {
     "High-Latitude/Auroral": 1.0,   # original NOAA table calibration
-    "Mid-Latitude": 0.7,
-    "Equatorial/Low": 0.4,
+    "Mid-Latitude": 0.6,
+    "Equatorial/Low": 0.35,
 }
 
 
