@@ -64,7 +64,7 @@ class TestFetchKpIndex:
 
         result = fetch_kp_index()
 
-        assert result["kp_index"] == 6  # ambil baris TERAKHIR
+        assert result["kp_index"] == 6  # get the LAST row
         assert isinstance(result["kp_forecast"], list)
         assert len(result["kp_forecast"]) == 6  # 2 baris x 3 kolom tanggal
 
@@ -90,7 +90,7 @@ class TestFetchKpIndex:
 
         result = fetch_kp_index()
         assert result["kp_index"] == 6
-        assert result["kp_forecast"] == []  # gagal parse -> kosong, bukan crash
+        assert result["kp_forecast"] == []  # parse failed -> empty, not crash
 
 
 class TestParseForecastText:
@@ -101,7 +101,7 @@ class TestParseForecastText:
         assert "T00:00" in forecast[0]["time"]
 
     def test_parse_garbage_text_returns_empty(self):
-        forecast = _parse_kp_forecast_text("tidak ada data valid di sini")
+        forecast = _parse_kp_forecast_text("There is no valid data here")
         assert forecast == []
 
 
@@ -170,7 +170,7 @@ class TestGetCurrentConditions:
         mock_flare.return_value = {"flare_class": None, "flare_time": None}
 
         result = get_current_conditions()
-        assert result["flare_class"] == "Tidak ada"
+        assert result["flare_class"] == "None"
 
     @patch("ingestion.ingestion.fetch_flare_data")
     @patch("ingestion.ingestion.fetch_kp_index")
@@ -181,7 +181,7 @@ class TestGetCurrentConditions:
         monkeypatch.setattr(ing, "CACHE_FILE", cache_file)
 
         cached_data = {
-            "kp_index": 4, "kp_forecast": [], "flare_class": "Tidak ada",
+            "kp_index": 4, "kp_forecast": [], "flare_class": "None",
             "flare_time": None, "fetched_at": "2026-08-09T00:00:00+00:00",
         }
         cache_file.write_text(json.dumps(cached_data))

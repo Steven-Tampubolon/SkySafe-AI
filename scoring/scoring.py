@@ -234,7 +234,7 @@ R_LABEL_MAP = {
 
 def get_r_scale(flare_class: str) -> str:
     """Return just the R-scale code (e.g. 'R2 Moderate') for display/debug."""
-    if flare_class is None or flare_class.strip().lower() in ("none", "tidak ada", ""):
+    if flare_class is None or flare_class.strip().lower() in ("none", ""):
         return "R0"
 
     match = FLARE_CLASS_PATTERN.match(flare_class.strip())

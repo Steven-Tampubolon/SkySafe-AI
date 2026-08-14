@@ -164,3 +164,26 @@ class TestValidatesAgainstMay2024Storm:
         score, label = score_gps_impact(9, "Equatorial/Low")
         assert label != "Critical"
         assert score < 50
+
+class TestValidatesAgaintsNov2025Flare:
+    """
+    Validation against the November 4, 2025 X1.8 solar flare (active region
+    AR4274), which triggered a strong R3 radio blackout across most of
+    North and South America per NOAA SWPC. This is the second historical
+    validation point — the first (May 2024, TestValidatesAgainstMay2024Storm)
+    validated the GPS/geomagnetic side; this one validates the HF/radio side,
+    directly relevant to the ham_radio_operator role.
+
+    X1.8 falls in the X1-X9 range -> R3 Strong -> label "High" per our
+    R-scale table.
+
+    Source: NOAA SWPC event reports, Nov 2025.
+    """
+
+    def test_validates_againts_nov_2025_flare(self):
+        flare_class = "X1.8"
+        label = score_hf_risk(flare_class)
+        assert label == "High"
+
+        r_sclae = get_r_scale(flare_class)
+        assert r_sclae == "R3 Strong"
