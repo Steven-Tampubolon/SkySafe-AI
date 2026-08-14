@@ -29,7 +29,7 @@ if __name__ == "__main__":
     print(json.dumps(conditions, indent=2))
 
     print("\n2) Computing latitude-adjusted deterministic scores...")
-    trust_input = build_trust_panel_input(resolved, conditions)
+    trust_input = build_trust_panel_input("farmer", resolved, conditions)
     print(json.dumps(trust_input, indent=2, ensure_ascii=False))
 
     print("\n3) Translating via Groq (role: farmer)...")
