@@ -140,3 +140,101 @@ class TestCallTranslationLayer:
         # "petani" was Week 1's role key — it's intentionally gone now.
         with pytest.raises(TranslationError):
             call_translation_layer("petani", SAMPLE_INPUT)
+
+ALL_ROLES = ["farmer", "surveyor", "ham_radio_operator", "general_public"]
+
+SCENARIO_LOW = {
+    "kp_index": 2,
+    "solar_flare_class": "C2.4",
+    "geomagnetic_latitude_band": "Equatorial/Low",
+    "gps_impact_score": 3.0,
+    "gps_impact_label": "Low",
+    "hf_blackout_risk_label": "Low",
+    "data_type": "real-time",
+    "confidence_level": "High",
+    "confidence_reason": "Data measured directly from NOAA/NASA instruments, not a prediction.",
+}
+
+SCENARIO_HIGH = {
+    "kp_index": 8,
+    "solar_flare_class": "X2.0",
+    "geomagnetic_latitude_band": "High-Latitude/Auroral",
+    "gps_impact_score": 77.0,
+    "gps_impact_label": "High",
+    "hf_blackout_risk_label": "High",
+    "data_type": "forecast",
+    "confidence_level": "Medium",
+    "confidence_reason": "12-hour forecast, geomagnetic models carry a reasonable margin of error.",
+}
+
+
+def _build_scenario_input(role: str, scenario: dict) -> dict:
+    base = {
+        "role": role,
+        "location_name": "Test Location",
+        "local_time": "August 25, 2026, 09:00 local time",
+        "forecast_window": "08:00-16:00 UTC",
+        "source_name": "NOAA SWPC",
+        "source_url": "https://www.swpc.noaa.gov/products/planetary-k-index",
+    }
+    base.update(scenario)
+    return base
+
+
+def _mock_output_for(data: dict) -> dict:
+    return {
+        "headline": "Test headline",
+        "plain_explanation": "Test explanation covering the situation.",
+        "recommended_action": "Test recommended action.",
+        "confidence_label": data["confidence_level"],
+        "why_confidence": "Test reasoning.",
+        "source_citation": f"{data['source_name']} — {data['source_url']}",
+    }
+
+
+class TestAllRolesAllScenarios:
+    """Closes the Week 2 coverage gap: at least 2 scenarios (Low, High)
+    per role, all 4 roles, all returning valid English JSON that passes
+    validation. 4 roles x 2 scenarios = 8 parametrized cases, matching the
+    original Week 2 Monday DoD."""
+
+    @pytest.mark.parametrize("role", ALL_ROLES)
+    @pytest.mark.parametrize("scenario_name,scenario", [("low", SCENARIO_LOW), ("high", SCENARIO_HIGH)])
+    @patch("ai_layer.translator.requests.post")
+    @patch("ai_layer.translator.os.getenv", return_value="fake_groq_key")
+    def test_role_scenario_combination(self, mock_getenv, mock_post, role, scenario_name, scenario):
+        data = _build_scenario_input(role, scenario)
+        mock_post.return_value = _mock_groq_response(_mock_output_for(data))
+
+        result = call_translation_layer(role, data)
+
+        assert result["_is_fallback"] is False
+        assert result["confidence_label"] == data["confidence_level"]
+
+class TestNormalizeOutput:
+    @patch("ai_layer.translator.requests.post")
+    @patch("ai_layer.translator.os.getenv", return_value="fake_groq_key")
+    def test_source_citation_always_deterministic_format(self, mock_getenv, mock_post):
+        """Regression test for the inconsistent citation formatting flagged
+        in external Week 2 review (comma vs dash vs no separator)."""
+        messy_output = dict(VALID_LLM_OUTPUT)
+        messy_output["source_citation"] = "noaa swpc (weird format, no url)"
+        mock_post.return_value = _mock_groq_response(messy_output)
+
+        result = call_translation_layer("farmer", SAMPLE_INPUT)
+
+        expected = f"{SAMPLE_INPUT['source_name']} — {SAMPLE_INPUT['source_url']}"
+        assert result["source_citation"] == expected
+
+    @patch("ai_layer.translator.requests.post")
+    @patch("ai_layer.translator.os.getenv", return_value="fake_groq_key")
+    def test_missing_terminal_punctuation_is_fixed(self, mock_getenv, mock_post):
+        """Regression test for run-on/missing-period sentences flagged in
+        the General Public - High Impact scenario during external review."""
+        no_period_output = dict(VALID_LLM_OUTPUT)
+        no_period_output["headline"] = "GPS impact expected today"
+        mock_post.return_value = _mock_groq_response(no_period_output)
+
+        result = call_translation_layer("farmer", SAMPLE_INPUT)
+
+        assert result["headline"].endswith(".")

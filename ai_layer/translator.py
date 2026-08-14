@@ -55,13 +55,24 @@ YOU MUST NOT:
   normal").
 - Invent or alter the name of any data source.
 - Downplay or hide a high risk score to make the tone "nicer to read".
+- Write internal field/variable names verbatim, such as "gps_impact_score",
+  "kp_index", or "hf_blackout_risk_label". Describe the underlying number in
+  natural language instead (e.g. "a GPS impact score of 3 out of 100", "a
+  Kp-index reading of 8" — note "Kp-index" as a scientific term is fine,
+  "kp_index" as a snake_case identifier is not).
+- Use these overused filler phrases: "It's a good idea to", "Consider X or
+  Y", "adjust your plans accordingly", "as planned". Vary your wording and
+  action verbs instead.
+- Write run-on sentences joined by multiple "and"/"or" conjunctions — split
+  distinct ideas into separate, shorter sentences.
 
 YOU MUST:
 - Always include the raw score/index and the official source name in your
-  explanation.
+  explanation, phrased in natural language (see rule above).
 - Adapt terminology and focus to the given user role.
 - Use a calm, concrete, actionable tone — not alarmist.
 - State the confidence_level and a brief reason for it.
+- End every sentence with correct terminal punctuation.
 - If the data is FORECAST (not a real-time measurement), state that
   explicitly and do not present it as a certain event.
 - If gps_impact_label = "Critical", direct the user to check the official
@@ -184,6 +195,10 @@ EXPLANATION FOCUS:
   support it.
 - Do not mention precision-agriculture or survey-grade GPS impacts — not
   relevant for this role.
+- Never mention "Kp-index" or any numeric score by name — describe severity
+  in everyday terms only (e.g. "a strong solar storm today", "nothing
+  unusual today", "northern lights might be visible if you're near the
+  polar regions").
 
 TONE: casual, a little engaging/educational, but always accurate and never
 exaggerated.
@@ -286,6 +301,41 @@ def _call_groq(system_prompt: str, user_prompt: str) -> dict:
     content = body["choices"][0]["message"]["content"]
     return json.loads(content)
 
+SENTENCE_END_CHARS = (".", "!", "?", '"', "'", ")")
+
+
+def _ensure_terminal_punctuation(text: str) -> str:
+    text = text.strip()
+    if text and text[-1] not in SENTENCE_END_CHARS:
+        text += "."
+    return text
+
+
+def _normalize_output(output: dict, data: dict) -> dict:
+    """
+    Deterministic post-processing applied AFTER validation passes, closing
+    gaps an LLM can't be relied on to get consistent every call:
+
+    - source_citation is REBUILT from the original input data, never taken
+      from the LLM's own wording. External review of Week 2 output found
+      inconsistent formatting across calls ("NOAA SWPC, url" vs "NOAA SWPC
+      - url" vs missing separator entirely) — rebuilding it deterministically
+      makes the format identical every time, same principle as never
+      trusting the LLM with numbers.
+    - Ensures key text fields end with terminal punctuation, since the LLM
+      occasionally drops a trailing period (observed in General Public
+      scenarios during manual review).
+    """
+    normalized = dict(output)
+    for key in ("headline", "plain_explanation", "recommended_action", "why_confidence"):
+        normalized[key] = _ensure_terminal_punctuation(normalized[key])
+
+    source_name = data.get("source_name", "Unknown source")
+    source_url = data.get("source_url", "")
+    normalized["source_citation"] = f"{source_name} — {source_url}".strip(" —")
+
+    return normalized
+
 
 def call_translation_layer(role: str, data: dict) -> dict:
     """
@@ -321,6 +371,7 @@ def call_translation_layer(role: str, data: dict) -> dict:
             continue
 
         if _validate_output(output, data):
+            output = _normalize_output(output, data)
             output["_is_fallback"] = False
             return output
 
