@@ -48,7 +48,7 @@ if "form_version" not in st.session_state:
     st.session_state["form_version"] = 0
 
 if st.button("🔄 Start Over", help="Clear the current result and start a new lookup."):
-    for key in ("data_source", "resolved_location", "role_key", "historical_key"):
+    for key in ("data_source", "resolved_location", "role_key", "historical_key", "prefill_source"):
         st.session_state.pop(key, None)
     st.session_state["form_version"] += 1
     st.query_params.clear()
@@ -62,6 +62,7 @@ ROLE_OPTIONS = {
     "Ham Radio Operator": "ham_radio_operator",
     "General Public": "general_public",
 }
+REVERSE_ROLE_OPTIONS = {v: k for k, v in ROLE_OPTIONS.items()}
 
 IMPACT_BADGE_COLORS = {
     "Low": "#2e7d32",
@@ -211,23 +212,24 @@ def render_trust_panel(role_key: str, resolved: dict, conditions: dict):
     st.markdown(f"**Source:** [{trust_input['source_name']}]({trust_input['source_url']})")
     st.caption(f"Data timestamp: {trust_input['local_time']}")
 
-    if "qp_processed" not in st.session_state:
-        st.session_state["qp_processed"] = True
-        qp_location = st.query_params.get("location")
-        qp_role = st.query_params.get("role")
+if "qp_processed" not in st.session_state:
+    st.session_state["qp_processed"] = True
+    qp_location = st.query_params.get("location")
+    qp_role = st.query_params.get("role")
 
-        if qp_location and qp_role in ROLE_OPTIONS.values():
-            with st.spinner(f"Loading your daily check for '{qp_location}'..."):
-                try:
-                    resolved = geocode_location(qp_location)
-                    st.session_state["data_source"] = "live"
-                    st.session_state["resolved_location"] = resolved
-                    st.session_state["role_key"] = qp_role
-                except GeocodingError as e:
-                    st.warning(
-                        f"Couldn't reload your saved location ('{qp_location}')"
-                        f"from the calender link - please search agai below. ({e})"
-                    )
+    if qp_location and qp_role in ROLE_OPTIONS.values():
+        with st.spinner(f"Loading your daily check for '{qp_location}'..."):
+            try:
+                resolved = geocode_location(qp_location)
+                st.session_state["data_source"] = "live"
+                st.session_state["resolved_location"] = resolved
+                st.session_state["role_key"] = qp_role
+                st.session_state["prefill_source"] = "reminder"
+            except GeocodingError as e:
+                st.warning(
+                    f"Couldn't reload your saved location ('{qp_location}') "
+                    f"from the calendar link — please search again below. ({e})"
+                )
 
 
 # --- Mode selector ---
@@ -266,9 +268,12 @@ if mode == "Live Location":
     if st.session_state.get("data_source") == "live" and "resolved_location" in st.session_state:
         resolved = st.session_state["resolved_location"]
         role_key = st.session_state["role_key"]
+        role_label = REVERSE_ROLE_OPTIONS.get(role_key, role_key)
 
         st.divider()
-        st.success(f"📍 **{resolved['resolved_name']}**")
+        if st.session_state.get("prefill_source") == "reminder":
+            st.info("📅 Loaded from your daily calendar reminder.")
+        st.success(f"📍 **{resolved['resolved_name']}** — Role: **{role_label}**")
         st.caption(f"Coordinates: {resolved['latitude']:.4f}, {resolved['longitude']:.4f}")
 
         with st.spinner("Fetching current space weather conditions..."):
