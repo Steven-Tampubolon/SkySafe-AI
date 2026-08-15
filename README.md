@@ -6,7 +6,7 @@ Challenge theme: **Advance Space Exploration with AI**
 
 Submitted by: **Steven Oktavian Tampubolon** (solo)
 
-🚀 **Try it live:** _[Streamlit deployment link — TODO, add after deploying to streamlit.io]_
+🚀 **Try it live:** https://skysafe-ai.streamlit.app/
 
 🎥 **Demo video:** _[YouTube link — TODO, add after recording]_
 
