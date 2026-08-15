@@ -40,6 +40,10 @@ hides the raw numbers behind the AI's words.
 3. **Get your briefing** — the AI Explanation section gives you plain-language impact and a recommended action.
 4. **Check the Trust Panel** — the Raw Data & Sources section shows every number and source the explanation is based on, so nothing is taken on faith.
 5. **Or try Historical Validation mode** — replay two real, documented space weather events through the exact same pipeline used for live queries.
+6. **Add a daily reminder** — after checking your Trust Panel, download a
+   recurring `.ics` calendar reminder that links straight back to your
+   personalized brief tomorrow — no login, no backend, just your calendar
+   app doing what it already does well.
 
 ---
 
@@ -224,6 +228,17 @@ documented historical data.
   high-precision model (IGRF). It is sufficient to demonstrate that
   impact genuinely varies by location, but is a deliberate simplification
   for hackathon scope, not a claim of full scientific precision.
+
+## Daily Reminder
+
+SkySafe AI can generate a personalized, recurring daily calendar reminder
+(`.ics`, RFC 5545) with zero backend infrastructure — no scheduler, no
+push service, no account system. It rides entirely on the calendar app
+the user already trusts. The reminder text is intentionally static
+("check your conditions today") rather than the actual live score, since
+a live score would require a server-side feed independent of the user's
+browser — the reminder's deep link, which pre-fills the user's location
+and role, is what keeps it useful without that infrastructure.
 
 ## Tech Stack
 

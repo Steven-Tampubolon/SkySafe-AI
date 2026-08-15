@@ -2,3 +2,6 @@ requests
 pytest
 python-dotenv
 streamlit
+icalendar
+timezonefinder
+pytz

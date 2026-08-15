@@ -29,6 +29,7 @@ from ingestion.ingestion import get_current_conditions, IngestionError
 from scoring.scoring import ScoringError
 from ai_layer.translator import call_translation_layer, TranslationError
 from pipeline import build_trust_panel_input
+from reminder import generate_reminder_ics
 from scripts.validate_may_2024_storm import (
     RESOLVED_LOCATION as MAY2024_LOCATION,
     HISTORICAL_CONDITIONS as MAY2024_CONDITIONS,
@@ -40,6 +41,9 @@ from scripts.validate_nov_2025_flare import (
 
 st.set_page_config(page_title="SkySafe AI", page_icon="🛰️", layout="centered")
 
+st.title("🛰️ SkySafe AI")
+st.caption("Space weather impact, translated for you — wherever you are.")
+
 if "form_version" not in st.session_state:
     st.session_state["form_version"] = 0
 
@@ -47,6 +51,7 @@ if st.button("🔄 Start Over", help="Clear the current result and start a new l
     for key in ("data_source", "resolved_location", "role_key", "historical_key"):
         st.session_state.pop(key, None)
     st.session_state["form_version"] += 1
+    st.query_params.clear()
     st.rerun()
 
 FV = st.session_state["form_version"]
@@ -206,6 +211,24 @@ def render_trust_panel(role_key: str, resolved: dict, conditions: dict):
     st.markdown(f"**Source:** [{trust_input['source_name']}]({trust_input['source_url']})")
     st.caption(f"Data timestamp: {trust_input['local_time']}")
 
+    if "qp_processed" not in st.session_state:
+        st.session_state["qp_processed"] = True
+        qp_location = st.query_params.get("location")
+        qp_role = st.query_params.get("role")
+
+        if qp_location and qp_role in ROLE_OPTIONS.values():
+            with st.spinner(f"Loading your daily check for '{qp_location}'..."):
+                try:
+                    resolved = geocode_location(qp_location)
+                    st.session_state["data_source"] = "live"
+                    st.session_state["resolved_location"] = resolved
+                    st.session_state["role_key"] = qp_role
+                except GeocodingError as e:
+                    st.warning(
+                        f"Couldn't reload your saved location ('{qp_location}')"
+                        f"from the calender link - please search agai below. ({e})"
+                    )
+
 
 # --- Mode selector ---
 
@@ -217,13 +240,12 @@ if mode == "Live Location":
             "Your location",
             placeholder="e.g. Nairobi, Kenya",
             help="Type any city, region, or country name — anywhere in the world.",
-            key=f"location_input_field_{FV}",
+            key="location_input_field",
         )
         role_label = st.selectbox(
-            "I am a...", list(ROLE_OPTIONS.keys()), key=f"role_select_field_{FV}"
+            "I am a...", list(ROLE_OPTIONS.keys()), key="role_select_field"
         )
         submitted = st.form_submit_button("Check space weather impact")
-
     if submitted:
         if not location_input.strip():
             st.error("Please enter a location.")
@@ -258,6 +280,25 @@ if mode == "Live Location":
 
         if conditions:
             render_trust_panel(role_key, resolved, conditions)
+
+            st.divider()
+            ics_bytes = generate_reminder_ics(
+                resolved["resolved_name"],
+                role_key,
+                resolved["latitude"],
+                resolved["longitude"],
+            )
+            st.download_button(
+                label="📅 Add Daily Check to Calendar",
+                data=ics_bytes,
+                file_name="skysafe-daily-reminder.ics",
+                mime="text/calendar",
+                help=(
+                    "Adds a recurring daily reminder in your calendar app "
+                    "(Google/Apple/Outlook) that links back here with your "
+                    "location and role pre-filled."
+                ),
+            )
 
 else:
     event = HISTORICAL_EVENTS[mode]
