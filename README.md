@@ -6,7 +6,7 @@ Challenge theme: **Advance Space Exploration with AI**
 
 Submitted by: **Steven Oktavian Tampubolon** (solo)
 
-🚀 **Try it live:** https://skysafe-ai.streamlit.app/
+🚀 **Try it live:** https://skysafe-ai.streamlit.app
 
 🎥 **Demo video:** _[YouTube link — TODO, add after recording]_
 
@@ -24,14 +24,26 @@ ham radio operators relying on HF propagation. SkySafe AI closes that gap
 anyone in the world can understand, backed by a Trust Panel that never
 hides the raw numbers behind the AI's words.
 
-## Demo
+## Historical Validation
+
+SkySafe AI's scoring is validated against two real, documented space
+weather events — not just synthetic test cases. Both can be replayed live
+via the app's **"Historical Validation"** mode, which runs the exact same
+scoring + AI pipeline used for live queries against fixed, documented
+historical data — no live API calls, same Trust Panel, same trust
+guarantees.
 
 <table>
   <tr>
-    <td><img width="100%" alt="May 2024 Storm — GPS Impact Critical" src="docs/submission-evidence/historical-validation/may_2024_storm.png" /></td>
-    <td><img width="100%" alt="Nov 2025 Flare — HF Blackout Risk High" src="docs/submission-evidence/historical-validation/nov2025-x18-flare.png" /></td>
+    <td><img width="100%" alt="May 2024 Storm — GPS Impact Critical" src="docs/submission-evidence/historical-validation/historical-may2024.png" /></td>
+    <td><img width="100%" alt="Nov 2025 Flare — HF Blackout Risk High" src="docs/submission-evidence/historical-validation/historical-nov2025.png" /></td>
   </tr>
 </table>
+
+| Event | Metric validated | Result |
+|---|---|---|
+| May 10-11, 2024 "Gannon storm" (Kp=9, G5 Extreme) | GPS impact / G-scale | Correctly resolves to "Critical" at high latitude, "Moderate" near the equator |
+| Nov 4, 2025 X1.8 flare (AR4274) | HF blackout risk / R-scale | Correctly resolves to "High" (R3 Strong), matching NOAA's real classification |
 
 ## How to Use
 
@@ -190,28 +202,15 @@ correctly reflects that geomagnetic impact isn't uniform across the globe.
 
 <table>
   <tr>
-    <td><img width="100%" alt="Farmer — Nairobi, Kenya" src="docs/submission-evidence/week2-global-locations/farmer-nairobi-kenya.png" /></td>
-    <td><img width="100%" alt="General Public — Jakarta, Indonesia" src="docs/submission-evidence/week2-global-locations/general-public-jakarta-indonesia.png" /></td>
+    <td><img width="100%" alt="Farmer — Nairobi, Kenya" src="docs/submission-evidence/week2-global-locations/live-nairobi-farmer.png" /></td>
+    <td><img width="100%" alt="General Public — Jakarta, Indonesia" src="docs/submission-evidence/week2-global-locations/live-jakarta-general-public.png" /></td>
   </tr>
   <tr>
-    <td><img width="100%" alt="Ham Radio Operator — Reykjavik, Iceland" src="docs/submission-evidence/week2-global-locations/ham-radio-operator-reykjavik-iceland.png" /></td>
-    <td><img width="100%" alt="Surveyor — Madrid, Spain" src="docs/submission-evidence/week2-global-locations/surveyor-madrid-spain.png" /></td>
+    <td><img width="100%" alt="Ham Radio Operator — Reykjavik, Iceland" src="docs/submission-evidence/week2-global-locations/live-reykjavik-ham-radio.png" /></td>
+    <td><img width="100%" alt="Surveyor — Madrid, Spain" src="docs/submission-evidence/week2-global-locations/live-madrid-surveyor.png" /></td>
   </tr>
 </table>
 
-## Historical Validation
-
-SkySafe AI's scoring is validated against two real, documented space
-weather events — not just synthetic test cases:
-
-| Event | Metric validated | Result |
-|---|---|---|
-| May 10-11, 2024 "Gannon storm" (Kp=9, G5 Extreme) | GPS impact / G-scale | Correctly resolves to "Critical" at high latitude, "Moderate" near the equator |
-| Nov 4, 2025 X1.8 flare (AR4274) | HF blackout risk / R-scale | Correctly resolves to "High" (R3 Strong), matching NOAA's real classification |
-
-Both can be replayed live via the app's **"Historical Validation"** mode,
-which runs the exact same pipeline used for live queries against fixed,
-documented historical data.
 
 ## Known Limitations
 

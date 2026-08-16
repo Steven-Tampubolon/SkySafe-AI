@@ -30,6 +30,20 @@ from scoring.scoring import ScoringError
 from ai_layer.translator import call_translation_layer, TranslationError
 from pipeline import build_trust_panel_input
 from reminder import generate_reminder_ics
+from ui.theme import (
+    inject_global_styles,
+    render_badge,
+    render_metric_card,
+    render_action_box,
+    render_progress_bar,
+    render_headline,
+    render_teaser_card,
+    tier_fraction,
+    IMPACT_BADGE_COLORS,
+    CONFIDENCE_BADGE_COLORS,
+    SEVERITY_ICON_BY_COLOR,
+    COLORS,
+)
 from scripts.validate_may_2024_storm import (
     RESOLVED_LOCATION as MAY2024_LOCATION,
     HISTORICAL_CONDITIONS as MAY2024_CONDITIONS,
@@ -39,20 +53,28 @@ from scripts.validate_nov_2025_flare import (
     HISTORICAL_CONDITIONS as NOV2025_CONDITIONS,
 )
 
-st.set_page_config(page_title="SkySafe AI", page_icon="🛰️", layout="centered")
-
-st.title("🛰️ SkySafe AI")
-st.caption("Space weather impact, translated for you — wherever you are.")
+st.set_page_config(page_title="SkySafe AI", page_icon="🛰️", layout="wide")
+inject_global_styles()
 
 if "form_version" not in st.session_state:
     st.session_state["form_version"] = 0
 
-if st.button("🔄 Start Over", help="Clear the current result and start a new lookup."):
-    for key in ("data_source", "resolved_location", "role_key", "historical_key", "prefill_source"):
-        st.session_state.pop(key, None)
-    st.session_state["form_version"] += 1
-    st.query_params.clear()
-    st.rerun()
+col_brand, col_reset = st.columns([5, 1])
+with col_brand:
+    st.title("🛰️ SkySafe AI")
+    st.caption("Space weather impact, translated for you — wherever you are.")
+with col_reset:
+    st.write("")  # vertical spacer, aligns button with title baseline
+    if st.button(
+        "🔄 Start Over",
+        help="Clear the current result and start a new lookup.",
+        use_container_width=True,
+    ):
+        for key in ("data_source", "resolved_location", "role_key", "historical_key", "prefill_source"):
+            st.session_state.pop(key, None)
+        st.session_state["form_version"] += 1
+        st.query_params.clear()
+        st.rerun()
 
 FV = st.session_state["form_version"]
 
@@ -64,17 +86,6 @@ ROLE_OPTIONS = {
 }
 REVERSE_ROLE_OPTIONS = {v: k for k, v in ROLE_OPTIONS.items()}
 
-IMPACT_BADGE_COLORS = {
-    "Low": "#2e7d32",
-    "Moderate": "#f9a825",
-    "High": "#ef6c00",
-    "Critical": "#c62828",
-}
-CONFIDENCE_BADGE_COLORS = {
-    "High": "#2e7d32",
-    "Medium": "#f9a825",
-    "Low": "#c62828",
-}
 
 HISTORICAL_EVENTS = {
     "📜 Historical: May 2024 Storm (GPS/G-scale)": {
@@ -136,14 +147,6 @@ HISTORICAL_EVENTS = {
 }
 
 
-def render_labeled_badge(prefix: str, badge_text: str, color: str):
-    st.markdown(
-        f"{prefix} <span style='background-color:{color};color:white;"
-        f"padding:3px 12px;border-radius:12px;font-size:0.85em;"
-        f"font-weight:600;'>{badge_text}</span>",
-        unsafe_allow_html=True,
-    )
-
 
 @st.cache_data(ttl=300, show_spinner=False)
 def cached_get_current_conditions():
@@ -155,9 +158,20 @@ def cached_call_translation_layer(role_key: str, data: dict):
     return call_translation_layer(role_key, data)
 
 
-def render_trust_panel(role_key: str, resolved: dict, conditions: dict):
+def render_trust_panel(role_key: str, resolved: dict, conditions: dict, show_calendar_button: bool = False):
     """Shared rendering path for BOTH live and historical data — the same
-    function, same Trust Panel, regardless of data source."""
+    function, same Trust Panel, regardless of data source.
+
+    show_calendar_button: only True for live queries (see tab_live below).
+    Historical Validation intentionally has no reminder button — it makes
+    no sense to remind someone to re-check a past, fixed event.
+
+    NOTE: business logic calls below (build_trust_panel_input,
+    cached_call_translation_layer, their try/except handling) are
+    UNCHANGED from before the Cosmic Professional styling pass — only the
+    st.* rendering calls were swapped for ui/theme.py equivalents. No new
+    labels are invented anywhere below: every badge/bar renders a value
+    that already exists in trust_input or ai_output."""
     try:
         trust_input = build_trust_panel_input(role_key, resolved, conditions)
     except ScoringError as e:
@@ -177,40 +191,87 @@ def render_trust_panel(role_key: str, resolved: dict, conditions: dict):
             "basic summary based on the raw data instead."
         )
 
-    st.subheader("AI Explanation")
-    st.markdown(f"**{ai_output['headline']}**")
+    render_headline(ai_output["headline"])
     st.write(ai_output["plain_explanation"])
-    st.markdown(f"**Recommended action:** {ai_output['recommended_action']}")
+    render_action_box(ai_output["recommended_action"])
 
-    st.subheader("Raw Data & Sources")
+    st.divider()
+    st.markdown("##### Raw Data & Sources")
 
     col1, col2 = st.columns(2)
     with col1:
-        st.metric("Kp Index", trust_input["kp_index"])
-        st.write(f"**Solar flare class:** {trust_input['solar_flare_class']}")
-        st.write(f"**Geomagnetic band:** {trust_input['geomagnetic_latitude_band']}")
-    with col2:
-        st.write(f"**GPS impact score:** {trust_input['gps_impact_score']} / 100")
-        render_labeled_badge(
-            "**GPS impact:**",
-            trust_input["gps_impact_label"],
+        render_metric_card("Kp Index (Geomagnetic)", str(trust_input["kp_index"]))
+        render_progress_bar(
+            trust_input["kp_index"] / 9,
             IMPACT_BADGE_COLORS[trust_input["gps_impact_label"]],
         )
-        render_labeled_badge(
-            "**HF blackout risk:**",
-            trust_input["hf_blackout_risk_label"],
-            IMPACT_BADGE_COLORS[trust_input["hf_blackout_risk_label"]],
+
+        st.write("")
+        render_metric_card("Solar Flare Class", trust_input["solar_flare_class"])
+        st.caption(f"Geomagnetic band: {trust_input['geomagnetic_latitude_band']}")
+
+    with col2:
+        gps_color = IMPACT_BADGE_COLORS[trust_input["gps_impact_label"]]
+        gps_icon = SEVERITY_ICON_BY_COLOR.get(gps_color, "")
+        render_metric_card(
+            "Expected GPS Impact",
+            f"{gps_icon} {trust_input['gps_impact_label']} ({trust_input['gps_impact_score']}/100)",
         )
+        render_progress_bar(trust_input["gps_impact_score"] / 100, gps_color)
 
-    render_labeled_badge(
-        "**Confidence:**",
-        ai_output["confidence_label"],
-        CONFIDENCE_BADGE_COLORS[ai_output["confidence_label"]],
-    )
-    st.caption(ai_output["why_confidence"])
+        st.write("")
+        hf_color = IMPACT_BADGE_COLORS[trust_input["hf_blackout_risk_label"]]
+        hf_icon = SEVERITY_ICON_BY_COLOR.get(hf_color, "")
+        render_metric_card("HF Radio Blackout", f"{hf_icon} {trust_input['hf_blackout_risk_label']}")
+        render_progress_bar(tier_fraction(trust_input["hf_blackout_risk_label"]), hf_color)
 
-    st.markdown(f"**Source:** [{trust_input['source_name']}]({trust_input['source_url']})")
-    st.caption(f"Data timestamp: {trust_input['local_time']}")
+    st.divider()
+
+    if show_calendar_button:
+        col_info, col_action = st.columns([3, 1])
+        with col_info:
+            col_conf, col_source = st.columns(2)
+            with col_conf:
+                render_badge(
+                    "Confidence:",
+                    ai_output["confidence_label"],
+                    CONFIDENCE_BADGE_COLORS[ai_output["confidence_label"]],
+                )
+                st.caption(ai_output["why_confidence"])
+            with col_source:
+                st.markdown(f"**Source:** [{trust_input['source_name']}]({trust_input['source_url']})")
+                st.caption(f"Data timestamp: {trust_input['local_time']}")
+        with col_action:
+            ics_bytes = generate_reminder_ics(
+                resolved["resolved_name"],
+                role_key,
+                resolved["latitude"],
+                resolved["longitude"],
+            )
+            st.download_button(
+                label="📅 Add Daily Check to Calender",
+                data=ics_bytes,
+                file_name="skysafe-daily-reminder.ics",
+                mime="text/calendar",
+                use_container_width=True,
+                help=(
+                    "Adds a recurring daily reminder in your calendar app "
+                    "(Google/Apple/Outlook) that links back here with your "
+                    "location and role pre-filled."
+                ),
+            )
+    else:
+        col_conf, col_source = st.columns(2)
+        with col_conf:
+            render_badge(
+                "Confidence:",
+                ai_output["confidence_label"],
+                CONFIDENCE_BADGE_COLORS[ai_output["confidence_label"]],
+            )
+            st.caption(ai_output["why_confidence"])
+        with col_source:
+            st.markdown(f"**Source:** [{trust_input['source_name']}]({trust_input['source_url']})")
+            st.caption(f"Data timestamp: {trust_input['local_time']}")
 
 if "qp_processed" not in st.session_state:
     st.session_state["qp_processed"] = True
@@ -234,111 +295,133 @@ if "qp_processed" not in st.session_state:
 
 # --- Mode selector ---
 
-mode = st.radio("Mode", ["Live Location"] + list(HISTORICAL_EVENTS.keys()), key=f"mode_radio_{FV}")
+tab_live, tab_historical = st.tabs(["📍 Live Location", "📜 Historical Validation"])
 
-if mode == "Live Location":
-    with st.form("location_form"):
-        location_input = st.text_input(
-            "Your location",
-            placeholder="e.g. Nairobi, Kenya",
-            help="Type any city, region, or country name — anywhere in the world.",
-            key="location_input_field",
+with tab_live:
+    col_sidebar, col_main = st.columns([1, 2.2], gap="large")
+
+    with col_sidebar:
+        with st.container(border=True):
+            st.markdown("### Check Your Location")
+            with st.form("location_form"):
+                location_input = st.text_input(
+                    "Your location",
+                    placeholder="e.g. Nairobi, Kenya",
+                    help="Type any city, region, or country name — anywhere in the world.",
+                    key=f"location_input_field_{FV}",
+                )
+                role_label = st.selectbox(
+                    "I am a...", list(ROLE_OPTIONS.keys()), key=f"role_select_field_{FV}"
+                )
+                submitted = st.form_submit_button(
+                    "Check space weather impact", use_container_width=True
+                )
+
+            if submitted:
+                if not location_input.strip():
+                    st.error("Please enter a location.")
+                else:
+                    with st.spinner(f"Looking up '{location_input}'..."):
+                        try:
+                            resolved = geocode_location(location_input)
+                            st.session_state["data_source"] = "live"
+                            st.session_state["resolved_location"] = resolved
+                            st.session_state["role_key"] = ROLE_OPTIONS[role_label]
+                        except GeocodingError as e:
+                            st.session_state.pop("resolved_location", None)
+                            st.error(
+                                f"Couldn't find that location. Try being more specific "
+                                f"(e.g. add a country name). Details: {e}"
+                            )
+
+        may2024_narrative = HISTORICAL_EVENTS["📜 Historical: May 2024 Storm (GPS/G-scale)"]["narrative"]
+        render_teaser_card(
+            "Historical Context",
+            may2024_narrative[:140].rsplit(" ", 1)[0] + "…",
+            "→ See the \"Historical Validation\" tab above for the full event.",
         )
-        role_label = st.selectbox(
-            "I am a...", list(ROLE_OPTIONS.keys()), key="role_select_field"
-        )
-        submitted = st.form_submit_button("Check space weather impact")
-    if submitted:
-        if not location_input.strip():
-            st.error("Please enter a location.")
-        else:
-            with st.spinner(f"Looking up '{location_input}'..."):
+
+    with col_main:
+        if st.session_state.get("data_source") == "live" and "resolved_location" in st.session_state:
+            resolved = st.session_state["resolved_location"]
+            role_key = st.session_state["role_key"]
+            role_label_display = REVERSE_ROLE_OPTIONS.get(role_key, role_key)
+
+            if st.session_state.get("prefill_source") == "reminder":
+                st.info("📅 Loaded from your daily calendar reminder.")
+            st.success(f"📍 **{resolved['resolved_name']}** — Role: **{role_label_display}**")
+            st.caption(f"Coordinates: {resolved['latitude']:.4f}, {resolved['longitude']:.4f}")
+
+            with st.spinner("Fetching current space weather conditions..."):
                 try:
-                    resolved = geocode_location(location_input)
-                    st.session_state["data_source"] = "live"
-                    st.session_state["resolved_location"] = resolved
-                    st.session_state["role_key"] = ROLE_OPTIONS[role_label]
-                except GeocodingError as e:
-                    st.session_state.pop("resolved_location", None)
-                    st.error(
-                        f"Couldn't find that location. Try being more specific "
-                        f"(e.g. add a country name). Details: {e}"
-                    )
+                    conditions = cached_get_current_conditions()
+                except IngestionError as e:
+                    conditions = None
+                    st.error(f"Could not fetch space weather data right now. Please try again shortly. ({e})")
 
-    if st.session_state.get("data_source") == "live" and "resolved_location" in st.session_state:
-        resolved = st.session_state["resolved_location"]
-        role_key = st.session_state["role_key"]
-        role_label = REVERSE_ROLE_OPTIONS.get(role_key, role_key)
+            if conditions:
+                render_trust_panel(role_key, resolved, conditions, show_calendar_button=True)
+        else:
+            st.info("Enter your location and role in the sidebar to view your space weather briefing.")
 
-        st.divider()
-        if st.session_state.get("prefill_source") == "reminder":
-            st.info("📅 Loaded from your daily calendar reminder.")
-        st.success(f"📍 **{resolved['resolved_name']}** — Role: **{role_label}**")
-        st.caption(f"Coordinates: {resolved['latitude']:.4f}, {resolved['longitude']:.4f}")
+with tab_historical:
+    col_sidebar, col_main = st.columns([1, 2.2], gap="large")
 
-        with st.spinner("Fetching current space weather conditions..."):
-            try:
-                conditions = cached_get_current_conditions()
-            except IngestionError as e:
-                conditions = None
-                st.error(f"Could not fetch space weather data right now. Please try again shortly. ({e})")
+    with col_sidebar:
+        with st.container(border=True):
+            st.markdown("### Choose an Event")
+            hist_mode = st.radio(
+                "Historical event",
+                list(HISTORICAL_EVENTS.keys()),
+                key=f"historical_radio_{FV}",
+                label_visibility="collapsed",
+            )
+            load_clicked = st.button(
+                "Load this historical event", use_container_width=True
+            )
 
-        if conditions:
-            render_trust_panel(role_key, resolved, conditions)
+    event = HISTORICAL_EVENTS[hist_mode]
+
+    if load_clicked:
+        st.session_state["data_source"] = "historical"
+        st.session_state["historical_key"] = hist_mode
+
+    with col_main:
+        st.markdown(
+            f"""
+        <div class="glass-card" style="border-left: 4px solid {COLORS['tertiary']};">
+            <p style="color: {COLORS['tertiary']}; font-size: 0.9rem; font-weight: 700; margin-bottom: 0.5rem;">🗞️ WHY THIS MATTERS</p>
+            <p style="font-size: 0.95rem; margin-bottom: 0.75rem;">{event['narrative']}</p>
+        </div>
+        """,
+            unsafe_allow_html=True,
+        )
+
+        st.markdown("**Sources:**")
+        for src in event["sources"]:
+            st.markdown(f"- [{src['name']}]({src['url']})")
+
+        st.caption(
+            "This replays the actual measured data from this event through the "
+            "exact same scoring + AI pipeline used for live queries — no live "
+            "API calls, fixed historical data, for validation purposes."
+        )
+
+        if (
+            st.session_state.get("data_source") == "historical"
+            and st.session_state.get("historical_key") == hist_mode
+        ):
+            resolved = event["resolved_location"]
+            role_key = event["role_key"]
 
             st.divider()
-            ics_bytes = generate_reminder_ics(
-                resolved["resolved_name"],
-                role_key,
-                resolved["latitude"],
-                resolved["longitude"],
+            st.warning(
+                "📜 **Historical Validation Mode** — fixed data from a "
+                "documented past event, not a live query."
             )
-            st.download_button(
-                label="📅 Add Daily Check to Calendar",
-                data=ics_bytes,
-                file_name="skysafe-daily-reminder.ics",
-                mime="text/calendar",
-                help=(
-                    "Adds a recurring daily reminder in your calendar app "
-                    "(Google/Apple/Outlook) that links back here with your "
-                    "location and role pre-filled."
-                ),
-            )
+            st.success(f"📍 **{resolved['resolved_name']}** — Role: **{event['role_label']}**")
 
-else:
-    event = HISTORICAL_EVENTS[mode]
-
-    st.subheader("🗞️ Why This Matters")
-    st.write(event["narrative"])
-    st.markdown("**Sources:**")
-    for src in event["sources"]:
-        st.markdown(f"- [{src['name']}]({src['url']})")
-
-    st.caption(
-        "This replays the actual measured data from this event through the "
-        "exact same scoring + AI pipeline used for live queries — no live "
-        "API calls, fixed historical data, for validation purposes."
-    )
-
-    if st.button("Load this historical event"):
-        st.session_state["data_source"] = "historical"
-        st.session_state["historical_key"] = mode
-
-    if (
-        st.session_state.get("data_source") == "historical"
-        and st.session_state.get("historical_key") == mode
-    ):
-        resolved = event["resolved_location"]
-        role_key = event["role_key"]
-
-        st.divider()
-        st.warning(
-            "📜 **Historical Validation Mode** — fixed data from a "
-            "documented past event, not a live query."
-        )
-        st.success(f"📍 **{resolved['resolved_name']}** — Role: **{event['role_label']}**")
-
-        render_trust_panel(role_key, resolved, event["conditions"])
+            render_trust_panel(role_key, resolved, event["conditions"])
 
 st.divider()
 st.caption(
