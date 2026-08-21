@@ -8,7 +8,7 @@ Submitted by: **Steven Oktavian Tampubolon** (solo)
 
 🚀 **Try it live:** https://skysafe-ai.streamlit.app
 
-🎥 **Demo video:** _[YouTube link — TODO, add after recording]_
+🎥 **Demo video:** https://youtu.be/lSIJjVMFbyg
 
 ---
 
